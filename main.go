@@ -3,25 +3,21 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/apcera/termtables"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"log"
 	"net"
+	"sort"
 )
 
 var (
-	pFile  = flag.String("r", "", "pcap file name")
-	err    error
-	handle *pcap.Handle
-	eth    layers.Ethernet
-	ip4    layers.IPv4
-	ip6    layers.IPv6
-	tcp    layers.TCP
-	parser = gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth, &ip4, &ip6, &tcp)
-	//decoded           = []gopacket.LayerType{}
+	pFile               = flag.String("r", "", "pcap file name")
+	err                 error
+	handle              *pcap.Handle
 	totalBytes          = 0
-	packetLengthStats   = make(map[string]int)
+	packetLengthStats   = make(map[int]int)
 	ppsStats            = make(map[int64]int)
 	ethernetStats       = make(map[string]int)
 	etherType           = make(map[string]int)
@@ -82,23 +78,23 @@ func processPacket(packet gopacket.Packet) {
 
 	switch {
 	case packetLength <= 66:
-		packetLengthStats["66"]++
+		packetLengthStats[66]++
 	case packetLength <= 128:
-		packetLengthStats["128"]++
+		packetLengthStats[128]++
 	case packetLength <= 256:
-		packetLengthStats["256"]++
+		packetLengthStats[256]++
 	case packetLength <= 384:
-		packetLengthStats["384"]++
+		packetLengthStats[384]++
 	case packetLength <= 512:
-		packetLengthStats["512"]++
+		packetLengthStats[512]++
 	case packetLength <= 768:
-		packetLengthStats["768"]++
+		packetLengthStats[768]++
 	case packetLength <= 1024:
-		packetLengthStats["1024"]++
+		packetLengthStats[1024]++
 	case packetLength <= 1518:
-		packetLengthStats["1518"]++
+		packetLengthStats[1518]++
 	case packetLength > 1518:
-		packetLengthStats["jumbo"]++
+		packetLengthStats[9000]++
 	}
 
 	// Get the Ethernet stats
@@ -207,54 +203,87 @@ func processPacket(packet gopacket.Packet) {
 // Prints the final results
 func printResults() {
 
-	fmt.Println("Packet Size Distribution")
-	fmt.Println(" <=    66: ", packetLengthStats["66"])
-	fmt.Println(" <=   128: ", packetLengthStats["128"])
-	fmt.Println(" <=   256: ", packetLengthStats["256"])
-	fmt.Println(" <=   384: ", packetLengthStats["384"])
-	fmt.Println(" <=   512: ", packetLengthStats["512"])
-	fmt.Println(" <=   768: ", packetLengthStats["768"])
-	fmt.Println(" <=  1024: ", packetLengthStats["1024"])
-	fmt.Println(" <=  1518: ", packetLengthStats["1518"])
-	fmt.Println("    jumbo: ", packetLengthStats["jumbo"])
-	fmt.Println()
+	// Sort packetLengthStats
+	var a []int
+	for b := range packetLengthStats {
+		a = append(a, b)
+	}
+	sort.Ints(a)
+	// Create packetLengthStats table
+	packetLengthTable := termtables.CreateTable()
+	packetLengthTable.Style.PaddingRight = 5
+	packetLengthTable.Style.PaddingLeft = 5
+	packetLengthTable.AddTitle("Packet Size Distribution")
+	packetLengthTable.AddHeaders("Size", "Count")
+	for _, i := range a {
+		packetLengthTable.AddRow(i, packetLengthStats[i])
+	}
+	fmt.Println(packetLengthTable.Render())
 
 	totalPackets := int64(0)
-
 	for _, j := range ppsStats {
 		totalPackets += int64(j)
 	}
-
 	packetRate := totalPackets / int64(len(ppsStats)-1)
 	averagePacketSize := int64(totalBytes) / totalPackets
-	fmt.Println("Total packets: ", totalPackets)
-	fmt.Println("Average packet size: ", averagePacketSize)
-	fmt.Println("Average PPS: ", packetRate)
-	fmt.Println("Total bytes: ", totalBytes)
-	fmt.Println()
+	// Create packet stats table
+	packetStatsTable := termtables.CreateTable()
+	packetStatsTable.Style.PaddingRight = 5
+	packetStatsTable.Style.PaddingLeft = 5
+	packetStatsTable.AddTitle("Packet Metrics")
+	packetStatsTable.AddRow("Total packets", totalPackets)
+	packetStatsTable.AddRow("Average packet size", averagePacketSize)
+	packetStatsTable.AddRow("Average packets per second", packetRate)
+	packetStatsTable.AddRow("Total bytes", totalBytes)
+	fmt.Println(packetStatsTable.Render())
 
-	fmt.Println("Ethernet packets: ", ethernetStats["count"])
-	for i, j := range etherType {
-		fmt.Println("    ", i, ": \t", j)
+	// Sort protocols
+	var c []string
+	for d := range etherType {
+		c = append(c, d)
 	}
-	fmt.Println("TCP packets: ", tcpStats["count"])
-	fmt.Println("UDP packets: ", udpStats["count"])
-	fmt.Println("Non-ethernet packets: ", ethernetStats["countErr"])
-	fmt.Println()
+	sort.Strings(c)
+
+	// Create protocol table
+	protocolStatsTable := termtables.CreateTable()
+	protocolStatsTable.Style.PaddingRight = 5
+	protocolStatsTable.Style.PaddingLeft = 5
+	protocolStatsTable.AddTitle("Protocol Metrics")
+	protocolStatsTable.AddHeaders("Protocol", "Count")
+	protocolStatsTable.AddRow("Ethernet", ethernetStats["count"])
+	protocolStatsTable.AddRow("TCP", tcpStats["count"])
+	protocolStatsTable.AddRow("UDP", udpStats["count"])
+	protocolStatsTable.AddRow("!Ethernet", ethernetStats["countErr"])
+	protocolStatsTable.AddSeparator()
+	for _, j := range c {
+		protocolStatsTable.AddRow(j, etherType[j])
+	}
+	fmt.Println(protocolStatsTable.Render())
 
 	totalTcpConns := int64(0)
+
 	for _, j := range tcpConnectionsStats {
 		totalTcpConns += int64(j)
 	}
 	tcpConnsPerSecond := totalTcpConns / int64(len(ppsStats))
-	fmt.Println("Average TCP conns per sec: ", tcpConnsPerSecond)
 
 	totalUdpConns := int64(0)
 	for _, j := range udpConnectionsStats {
 		totalUdpConns += int64(j)
 	}
+
 	udpConnsPerSecond := totalUdpConns / int64(len(ppsStats))
-	fmt.Println("Average UDP  conns per sec: ", udpConnsPerSecond)
+
+	connectionStatsTable := termtables.CreateTable()
+	connectionStatsTable.Style.PaddingRight = 5
+	connectionStatsTable.Style.PaddingLeft = 5
+	connectionStatsTable.AddTitle("Connections Metrics")
+	connectionStatsTable.AddRow("TCP connections", totalTcpConns)
+	connectionStatsTable.AddRow("TCP conns/second", tcpConnsPerSecond)
+	connectionStatsTable.AddSeparator()
+	connectionStatsTable.AddRow("UDP connections", totalUdpConns)
+	connectionStatsTable.AddRow("UDP conns/second", udpConnsPerSecond)
+	fmt.Println(connectionStatsTable.Render())
 	return
 }
 
