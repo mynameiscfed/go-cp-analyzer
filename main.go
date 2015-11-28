@@ -11,30 +11,42 @@ import (
 )
 
 var (
-	pFile             = flag.String("r", "", "pcap file name")
-	err               error
-	handle            *pcap.Handle
-	eth               layers.Ethernet
-	ip4               layers.IPv4
-	ip6               layers.IPv6
-	tcp               layers.TCP
-	parser            = gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth, &ip4, &ip6, &tcp)
-	decoded           = []gopacket.LayerType{}
+	pFile  = flag.String("r", "", "pcap file name")
+	err    error
+	handle *pcap.Handle
+	eth    layers.Ethernet
+	ip4    layers.IPv4
+	ip6    layers.IPv6
+	tcp    layers.TCP
+	parser = gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth, &ip4, &ip6, &tcp)
+	//decoded           = []gopacket.LayerType{}
 	packetLengthStats = make(map[string]int)
 	ppsStats          = make(map[int64]int)
 	ethernetStats     = make(map[string]int)
 	etherType         = make(map[string]int)
 	tcpStats          = make(map[string]int)
 	udpStats          = make(map[string]int)
-	connectionTable   = make(map[int64]connection)
+	connectionTable   = make(map[uint64][]connection)
+	connetionStats    = make(map[int64]int)
 )
 
+// connection is a struct that holds IP connection information
+
 type connection struct {
-	srcAddr  net.IP
-	dstAddr  net.IP
-	srcPort  uint16
-	dstPort  uint16
-	protocol uint8
+	srcAddr   net.IP
+	dstAddr   net.IP
+	srcPort   uint16
+	dstPort   uint16
+	protocol  uint8
+	connState uint8
+}
+
+type tcpState struct {
+	SYN bool
+	ACK bool
+	PSH bool
+	FIN bool
+	RST bool
 }
 
 func main() {
@@ -97,9 +109,11 @@ func getPacketInfo(packet gopacket.Packet) {
 		ethernetStats["countErr"]++
 	}
 
+	// Define our 5-tuple vars
 	var srcIP, dstIP net.IP
 	var srcPort, dstPort uint16
 	var ipProto uint8
+	var state tcpState
 
 	// Get IPv4 info
 	ipv4Layer := packet.Layer(layers.LayerTypeIPv4)
@@ -127,6 +141,7 @@ func getPacketInfo(packet gopacket.Packet) {
 		tcpPacket, _ := tcpLayer.(*layers.TCP)
 		srcPort = uint16(tcpPacket.SrcPort)
 		dstPort = uint16(tcpPacket.DstPort)
+		state = tcpState{tcpPacket.SYN, tcpPacket.ACK, tcpPacket.PSH, tcpPacket.FIN, tcpPacket.RST}
 	}
 
 	// Get UDP stats
@@ -138,12 +153,35 @@ func getPacketInfo(packet gopacket.Packet) {
 		dstPort = uint16(udpPacket.DstPort)
 	}
 
-	// Try to create a connection
-	myConn := connection{srcIP, dstIP, srcPort, dstPort, ipProto}
-	fmt.Println(myConn)
-	return
+	// Check if this is a new TCP C->S connection or and established connection
+	if ipProto == 6 {
+		isConn, hash, cs := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
+		if isConn == true {
+			s := checkTcpState(state)
+			connectionTable[hash][0].connState = s
+			if cs == 1 {
+				// TODO
+			} else if cs == 2 {
+				// TODO
+			}
+		} else {
+			// Establish a new TCP connection
+			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
+			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1}
+			s := checkTcpState(state)
+			if s == 1 {
+				connectionTable[hash] = append(connectionTable[hash], conn)
+				// Update tcp connection stats for CPS count
+				connetionStats[packetTime]++
+			} else {
+				//Discard it. It is out of state. New TCP connections should only have SYN set.
+			}
+		}
+		return
+	}
 }
 
+// Prints the final results
 func printResults() {
 
 	fmt.Println("Packet Size Distribution")
@@ -164,11 +202,84 @@ func printResults() {
 	fmt.Println("UDP packets: ", udpStats["count"])
 	fmt.Println("Non-ethernet packets: ", ethernetStats["countErr"])
 
-	sum := int64(0)
+	totalPackets := int64(0)
+
 	for _, j := range ppsStats {
-		sum += int64(j)
+		totalPackets += int64(j)
 	}
-	packetRate := sum / int64(len(ppsStats)-1)
+	packetRate := totalPackets / int64(len(ppsStats)-1)
 	fmt.Println("Average PPS: ", packetRate)
+
+	totalTcpConns := int64(0)
+	for _, j := range connetionStats {
+		totalTcpConns += int64(j)
+	}
+	tcpConnsPerSecond := totalTcpConns / int64(len(ppsStats))
+	fmt.Println("Average TCP conns per sec: ", tcpConnsPerSecond)
 	return
+}
+
+// Creates 5-tuple hash
+func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) uint64 {
+
+	hash := uint(ipProto)
+	hashBits := uint(20)
+
+	a := ipToInt(srcIP)
+	b := ipToInt(dstIP)
+	c := uint(srcPort)
+	d := uint(dstPort)
+
+	for idx := uint(0); idx < 32; idx += hashBits {
+		hash += (a*59>>uint(32) - idx) + (b * 59 >> idx) + (c * 59) + (d * 59)
+	}
+
+	return uint64(hash)
+
+}
+
+func ipToInt(ip net.IP) uint {
+
+	// Take the last 4 bytes. If IPv4 this is all the bytes. If IPv6 this is the last 4 bytes
+	b := ip[len(ip)-4 : len(ip)]
+
+	// Little endian
+	b0 := uint(b[0]) << 24
+	b1 := uint(b[1]) << 16
+	b2 := uint(b[2]) << 8
+	b3 := uint(b[3])
+
+	return b0 + b1 + b2 + b3
+}
+
+func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) (bool, uint64, int) {
+
+	a := connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
+	b := connectionHash(dstIP, srcIP, dstPort, srcPort, ipProto)
+	if connectionTable[a] != nil {
+		return true, a, 1
+	} else if connectionTable[b] != nil {
+		return true, b, 2
+	}
+	return false, 0, 0
+}
+
+// checkTcpState returns the state of a connection
+// 1 C->S connection
+// 2 S->C reply
+// 3 C->S established
+// 4 FIN/RST - close conn
+// 5 no match
+func checkTcpState(t tcpState) uint8 {
+	if t.SYN == true && t.ACK == false && t.RST == false && t.FIN == false && t.PSH == false {
+		return 1
+	} else if t.SYN == true && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false {
+		return 2
+	} else if t.SYN == false && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false {
+		return 3
+	} else if t.FIN == true || t.RST == true {
+		return 4
+	} else {
+		return 5
+	}
 }
