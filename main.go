@@ -13,20 +13,20 @@ import (
 )
 
 var (
-	pFile               = flag.String("r", "", "pcap file name")
-	conntable           = flag.Bool("with-conntable", false, "dump connections table")
-	err                 error
-	handle              *pcap.Handle
-	totalBytes          = 0
-	packetLengthStats   = make(map[int]int)
-	ppsStats            = make(map[int64]int)
-	ethernetStats       = make(map[string]int)
-	etherType           = make(map[string]int)
-	tcpStats            = make(map[string]int)
-	udpStats            = make(map[string]int)
-	connectionTable     = make(map[uint64][]connection)
-	tcpConnectionsStats = make(map[int64]int)
-	udpConnectionsStats = make(map[int64]int)
+	pFile                    = flag.String("r", "", "pcap file name")
+	conntable                = flag.Bool("conntable", false, "dump connections table")
+	err                      error
+	handle                   *pcap.Handle
+	totalBytes               = 0
+	packetLengthStats        = make(map[int]int)
+	ppsStats                 = make(map[int]int)
+	ethernetStats            = make(map[string]int)
+	etherType                = make(map[string]int)
+	tcpStats                 = make(map[string]int)
+	udpStats                 = make(map[string]int)
+	connectionTable          = make(map[uint64][]connection)
+	newTCPConnectionsCreated = make(map[int]int)
+	udpConnectionsStats      = make(map[int]int)
 )
 
 // connection is a struct that holds IP connection information
@@ -69,13 +69,14 @@ func main() {
 	printResults()
 }
 
+// processPacket decodes each defined layer and collects important data
 func processPacket(packet gopacket.Packet) {
 
 	// Get the packet length and count it. Must use Metadata and not
 	// the data length to support when full packet was not captured.
 	packetLength := packet.Metadata().Length
 	totalBytes += packetLength
-	packetTime := packet.Metadata().Timestamp.Unix()
+	packetTime := int(packet.Metadata().Timestamp.Unix())
 	ppsStats[packetTime]++
 
 	switch {
@@ -169,7 +170,7 @@ func processPacket(packet gopacket.Packet) {
 				conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, s}
 				connectionTable[hash] = append(connectionTable[hash], conn)
 				// Update tcp connection stats for CPS count
-				tcpConnectionsStats[packetTime]++
+				newTCPConnectionsCreated[packetTime]++
 			} else {
 				// No connection found. Most likely pcap started while connection was in progress.
 			}
@@ -199,7 +200,7 @@ func processPacket(packet gopacket.Packet) {
 
 }
 
-// Prints the final results
+//printResults prints the final results
 func printResults() {
 
 	// Sort packetLengthStats
@@ -221,12 +222,12 @@ func printResults() {
 	}
 	fmt.Println(packetLengthTable.Render())
 
-	totalPackets := int64(0)
+	totalPackets := 0
 	for _, j := range ppsStats {
-		totalPackets += int64(j)
+		totalPackets += j
 	}
-	packetRate := totalPackets / int64(len(ppsStats)-1)
-	averagePacketSize := int64(totalBytes) / totalPackets
+	packetRate := totalPackets / len(ppsStats)
+	averagePacketSize := totalBytes / totalPackets
 
 	averageThrougput := totalBytes / len(ppsStats)
 
@@ -265,31 +266,29 @@ func printResults() {
 	}
 	fmt.Println(protocolStatsTable.Render())
 
-	totalTCPConns := int64(0)
-
+	totalTCPConns := 0
 	maxTCPConnsSec := 0
 
-	for _, j := range tcpConnectionsStats {
-		totalTCPConns += int64(j)
+	for _, j := range newTCPConnectionsCreated {
+		totalTCPConns += j
 		if j > maxTCPConnsSec {
 			maxTCPConnsSec = j
 		}
 	}
 
-	tcpConnsPerSecond := totalTCPConns / int64(len(ppsStats))
+	tcpConnsPerSecond := totalTCPConns / len(ppsStats)
 
-	totalUDPConns := int64(0)
-
+	totalUDPConns := 0
 	maxUDPConnsSec := 0
 
 	for _, j := range udpConnectionsStats {
-		totalUDPConns += int64(j)
+		totalUDPConns += j
 		if j > maxUDPConnsSec {
 			maxUDPConnsSec = j
 		}
 	}
 
-	udpConnsPerSecond := totalUDPConns / int64(len(ppsStats))
+	udpConnsPerSecond := totalUDPConns / len(ppsStats)
 
 	connectionStatsTable := termtables.CreateTable()
 	connectionStatsTable.Style.PaddingRight = 5
@@ -314,12 +313,12 @@ func printResults() {
 			cT.AddRow(i, connectionTable[i][0].srcAddr, connectionTable[i][0].srcPort, connectionTable[i][0].dstAddr, connectionTable[i][0].dstPort, connectionTable[i][0].protocol)
 			cT.AddSeparator()
 		}
-		fmt.Println(cT.Render())
+		fmt.Println(cT.RenderHTML())
 	}
 	return
 }
 
-// Creates 5-tuple hash
+//connectionHash creates 5-tuple hash used for the hash map connectionTable
 func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) uint64 {
 
 	hash := uint(ipProto)
@@ -338,6 +337,8 @@ func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, 
 
 }
 
+//ipToInt takes an IP address and returns it as an int.
+//IPv6 addresses return the last 4 bytes only.
 func ipToInt(ip net.IP) uint {
 
 	// Take the last 4 bytes. If IPv4 this is all the bytes. If IPv6 this is the last 4 bytes
@@ -352,6 +353,7 @@ func ipToInt(ip net.IP) uint {
 	return b0 + b1 + b2 + b3
 }
 
+//connectionLoookup searches hash map connectionTable to see if a connection is already established
 func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) (bool, uint64, uint8) {
 
 	a := connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
@@ -367,19 +369,20 @@ func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint1
 // checkTcpState returns the state of a connection
 // 1 C->S connection
 // 2 S->C reply
-// 3 C->S established
+// 3 C->S established / ACK only
 // 4 FIN/RST - close conn
 // 5 no match - in a connection
 func checkTCPState(t tcpState) uint8 {
-	if t.SYN == true && t.ACK == false && t.RST == false && t.FIN == false && t.PSH == false {
+	switch {
+	case t.SYN == true && t.ACK == false && t.RST == false && t.FIN == false && t.PSH == false:
 		return 1
-	} else if t.SYN == true && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false {
+	case t.SYN == true && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false:
 		return 2
-	} else if t.SYN == false && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false {
+	case t.SYN == false && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false:
 		return 3
-	} else if t.FIN == true || t.RST == true {
+	case t.FIN == true || t.RST == true:
 		return 4
-	} else {
+	default:
 		return 5
 	}
 }
