@@ -313,7 +313,7 @@ func printResults() {
 			cT.AddRow(i, connectionTable[i][0].srcAddr, connectionTable[i][0].srcPort, connectionTable[i][0].dstAddr, connectionTable[i][0].dstPort, connectionTable[i][0].protocol)
 			cT.AddSeparator()
 		}
-		fmt.Println(cT.RenderHTML())
+		fmt.Println(cT.Render())
 	}
 	return
 }
