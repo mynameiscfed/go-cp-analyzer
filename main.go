@@ -20,14 +20,16 @@ var (
 	tcp    layers.TCP
 	parser = gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth, &ip4, &ip6, &tcp)
 	//decoded           = []gopacket.LayerType{}
-	packetLengthStats = make(map[string]int)
-	ppsStats          = make(map[int64]int)
-	ethernetStats     = make(map[string]int)
-	etherType         = make(map[string]int)
-	tcpStats          = make(map[string]int)
-	udpStats          = make(map[string]int)
-	connectionTable   = make(map[uint64][]connection)
-	connetionStats    = make(map[int64]int)
+	totalBytes          = 0
+	packetLengthStats   = make(map[string]int)
+	ppsStats            = make(map[int64]int)
+	ethernetStats       = make(map[string]int)
+	etherType           = make(map[string]int)
+	tcpStats            = make(map[string]int)
+	udpStats            = make(map[string]int)
+	connectionTable     = make(map[uint64][]connection)
+	tcpConnectionsStats = make(map[int64]int)
+	udpConnectionsStats = make(map[int64]int)
 )
 
 // connection is a struct that holds IP connection information
@@ -63,17 +65,18 @@ func main() {
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		// Process packet here
-		getPacketInfo(packet)
+		processPacket(packet)
 	}
 	printResults()
 }
 
-func getPacketInfo(packet gopacket.Packet) {
+func processPacket(packet gopacket.Packet) {
 
 	// Get the packet length and count it. Must use Metadata and not
 	// the data length to support when full packet was not captured.
 
 	packetLength := packet.Metadata().Length
+	totalBytes += packetLength
 	packetTime := packet.Metadata().Timestamp.Unix()
 	ppsStats[packetTime]++
 
@@ -109,7 +112,7 @@ func getPacketInfo(packet gopacket.Packet) {
 		ethernetStats["countErr"]++
 	}
 
-	// Define our 5-tuple vars
+	// Define 5-tuple vars and state struct
 	var srcIP, dstIP net.IP
 	var srcPort, dstPort uint16
 	var ipProto uint8
@@ -134,7 +137,7 @@ func getPacketInfo(packet gopacket.Packet) {
 		ipProto = uint8(ipv6Packet.NextHeader)
 	}
 
-	// Get TCP stats
+	// Get TCP info
 	tcpLayer := packet.Layer(layers.LayerTypeTCP)
 	if tcpLayer != nil {
 		tcpStats["count"]++
@@ -144,7 +147,7 @@ func getPacketInfo(packet gopacket.Packet) {
 		state = tcpState{tcpPacket.SYN, tcpPacket.ACK, tcpPacket.PSH, tcpPacket.FIN, tcpPacket.RST}
 	}
 
-	// Get UDP stats
+	// Get UDP info
 	udpLayer := packet.Layer(layers.LayerTypeUDP)
 	if udpLayer != nil {
 		udpStats["count"]++
@@ -167,18 +170,38 @@ func getPacketInfo(packet gopacket.Packet) {
 		} else {
 			// Establish a new TCP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
-			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1}
 			s := checkTcpState(state)
 			if s == 1 {
+				conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, s}
 				connectionTable[hash] = append(connectionTable[hash], conn)
 				// Update tcp connection stats for CPS count
-				connetionStats[packetTime]++
+				tcpConnectionsStats[packetTime]++
 			} else {
-				//Discard it. It is out of state. New TCP connections should only have SYN set.
+				// No connection found. Most likely pcap started while connection was in progress.
 			}
 		}
 		return
 	}
+	// Check if this is a new UDP C->S connection or and established connection
+	// In a firewall the conn will be deleted after N seconds of the last packet.
+	if ipProto == 17 {
+		isConn, hash, cs := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
+		if isConn == true {
+			if cs == 1 {
+				connectionTable[hash][0].connState = cs
+			} else if cs == 2 {
+				connectionTable[hash][0].connState = cs
+			}
+		} else {
+			// Establish a new TCP connection
+			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
+			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1}
+			connectionTable[hash] = append(connectionTable[hash], conn)
+			udpConnectionsStats[packetTime]++
+		}
+		return
+	}
+
 }
 
 // Prints the final results
@@ -194,6 +217,22 @@ func printResults() {
 	fmt.Println(" <=  1024: ", packetLengthStats["1024"])
 	fmt.Println(" <=  1518: ", packetLengthStats["1518"])
 	fmt.Println("    jumbo: ", packetLengthStats["jumbo"])
+	fmt.Println()
+
+	totalPackets := int64(0)
+
+	for _, j := range ppsStats {
+		totalPackets += int64(j)
+	}
+
+	packetRate := totalPackets / int64(len(ppsStats)-1)
+	averagePacketSize := int64(totalBytes) / totalPackets
+	fmt.Println("Total packets: ", totalPackets)
+	fmt.Println("Average packet size: ", averagePacketSize)
+	fmt.Println("Average PPS: ", packetRate)
+	fmt.Println("Total bytes: ", totalBytes)
+	fmt.Println()
+
 	fmt.Println("Ethernet packets: ", ethernetStats["count"])
 	for i, j := range etherType {
 		fmt.Println("    ", i, ": \t", j)
@@ -201,21 +240,21 @@ func printResults() {
 	fmt.Println("TCP packets: ", tcpStats["count"])
 	fmt.Println("UDP packets: ", udpStats["count"])
 	fmt.Println("Non-ethernet packets: ", ethernetStats["countErr"])
-
-	totalPackets := int64(0)
-
-	for _, j := range ppsStats {
-		totalPackets += int64(j)
-	}
-	packetRate := totalPackets / int64(len(ppsStats)-1)
-	fmt.Println("Average PPS: ", packetRate)
+	fmt.Println()
 
 	totalTcpConns := int64(0)
-	for _, j := range connetionStats {
+	for _, j := range tcpConnectionsStats {
 		totalTcpConns += int64(j)
 	}
 	tcpConnsPerSecond := totalTcpConns / int64(len(ppsStats))
 	fmt.Println("Average TCP conns per sec: ", tcpConnsPerSecond)
+
+	totalUdpConns := int64(0)
+	for _, j := range udpConnectionsStats {
+		totalUdpConns += int64(j)
+	}
+	udpConnsPerSecond := totalUdpConns / int64(len(ppsStats))
+	fmt.Println("Average UDP  conns per sec: ", udpConnsPerSecond)
 	return
 }
 
@@ -252,7 +291,7 @@ func ipToInt(ip net.IP) uint {
 	return b0 + b1 + b2 + b3
 }
 
-func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) (bool, uint64, int) {
+func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) (bool, uint64, uint8) {
 
 	a := connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
 	b := connectionHash(dstIP, srcIP, dstPort, srcPort, ipProto)
