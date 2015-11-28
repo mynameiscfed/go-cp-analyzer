@@ -14,6 +14,7 @@ import (
 
 var (
 	pFile               = flag.String("r", "", "pcap file name")
+	conntable           = flag.Bool("with-conntable", false, "dump connections table")
 	err                 error
 	handle              *pcap.Handle
 	totalBytes          = 0
@@ -26,6 +27,12 @@ var (
 	connectionTable     = make(map[uint64][]connection)
 	tcpConnectionsStats = make(map[int64]int)
 	udpConnectionsStats = make(map[int64]int)
+	eth                 layers.Ethernet
+
+//	ip4                 layers.IPv4
+//	ip6                 layers.IPv6
+//	tcp                 layers.TCP
+//	udp                 layers.UDP
 )
 
 // connection is a struct that holds IP connection information
@@ -48,6 +55,7 @@ type tcpState struct {
 }
 
 func main() {
+
 	// Parse flags
 	flag.Parse()
 	// Open device
@@ -63,6 +71,7 @@ func main() {
 		// Process packet here
 		processPacket(packet)
 	}
+
 	printResults()
 }
 
@@ -70,7 +79,6 @@ func processPacket(packet gopacket.Packet) {
 
 	// Get the packet length and count it. Must use Metadata and not
 	// the data length to support when full packet was not captured.
-
 	packetLength := packet.Metadata().Length
 	totalBytes += packetLength
 	packetTime := packet.Metadata().Timestamp.Unix()
@@ -100,7 +108,7 @@ func processPacket(packet gopacket.Packet) {
 	// Get the Ethernet stats
 	ethernetLayer := packet.Layer(layers.LayerTypeEthernet)
 	if ethernetLayer != nil {
-		ethernetPacket, _ := ethernetLayer.(*layers.Ethernet)
+		ethernetPacket := eth
 		a := fmt.Sprintf(ethernetPacket.EthernetType.String())
 		etherType[a]++
 		ethernetStats["count"]++
@@ -124,7 +132,6 @@ func processPacket(packet gopacket.Packet) {
 	}
 
 	// Get IPv6 info
-
 	ipv6Layer := packet.Layer(layers.LayerTypeIPv6)
 	if ipv6Layer != nil {
 		ipv6Packet, _ := ipv6Layer.(*layers.IPv6)
@@ -152,21 +159,18 @@ func processPacket(packet gopacket.Packet) {
 		dstPort = uint16(udpPacket.DstPort)
 	}
 
+	// Get application layer info
+
 	// Check if this is a new TCP C->S connection or and established connection
 	if ipProto == 6 {
-		isConn, hash, cs := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
+		isConn, hash, _ := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
 		if isConn == true {
-			s := checkTcpState(state)
+			s := checkTCPState(state)
 			connectionTable[hash][0].connState = s
-			if cs == 1 {
-				// TODO
-			} else if cs == 2 {
-				// TODO
-			}
 		} else {
 			// Establish a new TCP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
-			s := checkTcpState(state)
+			s := checkTCPState(state)
 			if s == 1 {
 				conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, s}
 				connectionTable[hash] = append(connectionTable[hash], conn)
@@ -178,6 +182,7 @@ func processPacket(packet gopacket.Packet) {
 		}
 		return
 	}
+
 	// Check if this is a new UDP C->S connection or and established connection
 	// In a firewall the conn will be deleted after N seconds of the last packet.
 	if ipProto == 17 {
@@ -189,7 +194,7 @@ func processPacket(packet gopacket.Packet) {
 				connectionTable[hash][0].connState = cs
 			}
 		} else {
-			// Establish a new TCP connection
+			// Establish a new UDP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
 			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1}
 			connectionTable[hash] = append(connectionTable[hash], conn)
@@ -209,6 +214,7 @@ func printResults() {
 		a = append(a, b)
 	}
 	sort.Ints(a)
+
 	// Create packetLengthStats table
 	packetLengthTable := termtables.CreateTable()
 	packetLengthTable.Style.PaddingRight = 5
@@ -216,7 +222,8 @@ func printResults() {
 	packetLengthTable.AddTitle("Packet Size Distribution")
 	packetLengthTable.AddHeaders("Size", "Count")
 	for _, i := range a {
-		packetLengthTable.AddRow(i, packetLengthStats[i])
+		b := fmt.Sprintf(" <= %d", i)
+		packetLengthTable.AddRow(b, packetLengthStats[i])
 	}
 	fmt.Println(packetLengthTable.Render())
 
@@ -226,14 +233,15 @@ func printResults() {
 	}
 	packetRate := totalPackets / int64(len(ppsStats)-1)
 	averagePacketSize := int64(totalBytes) / totalPackets
+
 	// Create packet stats table
 	packetStatsTable := termtables.CreateTable()
 	packetStatsTable.Style.PaddingRight = 5
 	packetStatsTable.Style.PaddingLeft = 5
 	packetStatsTable.AddTitle("Packet Metrics")
-	packetStatsTable.AddRow("Total packets", totalPackets)
-	packetStatsTable.AddRow("Average packet size", averagePacketSize)
-	packetStatsTable.AddRow("Average packets per second", packetRate)
+	packetStatsTable.AddRow("Total pkts", totalPackets)
+	packetStatsTable.AddRow("Average pkt size", averagePacketSize)
+	packetStatsTable.AddRow("Average pkts/second", packetRate)
 	packetStatsTable.AddRow("Total bytes", totalBytes)
 	fmt.Println(packetStatsTable.Render())
 
@@ -260,30 +268,44 @@ func printResults() {
 	}
 	fmt.Println(protocolStatsTable.Render())
 
-	totalTcpConns := int64(0)
+	totalTCPConns := int64(0)
 
 	for _, j := range tcpConnectionsStats {
-		totalTcpConns += int64(j)
+		totalTCPConns += int64(j)
 	}
-	tcpConnsPerSecond := totalTcpConns / int64(len(ppsStats))
 
-	totalUdpConns := int64(0)
+	tcpConnsPerSecond := totalTCPConns / int64(len(ppsStats))
+
+	totalUDPConns := int64(0)
 	for _, j := range udpConnectionsStats {
-		totalUdpConns += int64(j)
+		totalUDPConns += int64(j)
 	}
 
-	udpConnsPerSecond := totalUdpConns / int64(len(ppsStats))
+	udpConnsPerSecond := totalUDPConns / int64(len(ppsStats))
 
 	connectionStatsTable := termtables.CreateTable()
 	connectionStatsTable.Style.PaddingRight = 5
 	connectionStatsTable.Style.PaddingLeft = 5
 	connectionStatsTable.AddTitle("Connections Metrics")
-	connectionStatsTable.AddRow("TCP connections", totalTcpConns)
+	connectionStatsTable.AddRow("TCP connections", totalTCPConns)
 	connectionStatsTable.AddRow("TCP conns/second", tcpConnsPerSecond)
 	connectionStatsTable.AddSeparator()
-	connectionStatsTable.AddRow("UDP connections", totalUdpConns)
+	connectionStatsTable.AddRow("UDP connections", totalUDPConns)
 	connectionStatsTable.AddRow("UDP conns/second", udpConnsPerSecond)
 	fmt.Println(connectionStatsTable.Render())
+
+	if *conntable == true {
+		// Dump conn table
+		cT := termtables.CreateTable()
+		cT.AddTitle("Connections Table")
+		cT.Style.PaddingLeft = 1
+		cT.Style.PaddingRight = 1
+		for i := range connectionTable {
+			cT.AddRow(i, connectionTable[i][0].srcAddr, connectionTable[i][0].srcPort, connectionTable[i][0].dstAddr, connectionTable[i][0].dstPort, connectionTable[i][0].protocol)
+			cT.AddSeparator()
+		}
+		fmt.Println(cT.Render())
+	}
 	return
 }
 
@@ -299,7 +321,7 @@ func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, 
 	d := uint(dstPort)
 
 	for idx := uint(0); idx < 32; idx += hashBits {
-		hash += (a*59>>uint(32) - idx) + (b * 59 >> idx) + (c * 59) + (d * 59)
+		hash += (a * 59 >> (uint(32) - idx)) + (b * 59 >> idx) + (c * 59) + (d * 59)
 	}
 
 	return uint64(hash)
@@ -309,9 +331,9 @@ func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, 
 func ipToInt(ip net.IP) uint {
 
 	// Take the last 4 bytes. If IPv4 this is all the bytes. If IPv6 this is the last 4 bytes
-	b := ip[len(ip)-4 : len(ip)]
+	b := ip[len(ip)-4:]
 
-	// Little endian
+	// Little endian - TODO big endian
 	b0 := uint(b[0]) << 24
 	b1 := uint(b[1]) << 16
 	b2 := uint(b[2]) << 8
@@ -324,9 +346,9 @@ func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint1
 
 	a := connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
 	b := connectionHash(dstIP, srcIP, dstPort, srcPort, ipProto)
-	if connectionTable[a] != nil {
+	if _, ok := connectionTable[a]; ok {
 		return true, a, 1
-	} else if connectionTable[b] != nil {
+	} else if _, ok := connectionTable[b]; ok {
 		return true, b, 2
 	}
 	return false, 0, 0
@@ -337,8 +359,8 @@ func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint1
 // 2 S->C reply
 // 3 C->S established
 // 4 FIN/RST - close conn
-// 5 no match
-func checkTcpState(t tcpState) uint8 {
+// 5 no match - in a connection
+func checkTCPState(t tcpState) uint8 {
 	if t.SYN == true && t.ACK == false && t.RST == false && t.FIN == false && t.PSH == false {
 		return 1
 	} else if t.SYN == true && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false {
