@@ -17,6 +17,7 @@ import (
 var (
 	pFile                    = flag.String("r", "", "pcap file name")
 	conntable                = flag.Bool("conntable", false, "dump connections table")
+	topN                     = flag.Int("n", 0, "top N connetions")
 	err                      error
 	handle                   *pcap.Handle
 	totalBytes               = 0
@@ -33,7 +34,7 @@ var (
 
 // connection is a struct that holds IP connection information
 
-type connTable map[uint64][]connection
+type connTable map[int][]connection
 
 type connection struct {
 	srcAddr   net.IP
@@ -42,6 +43,7 @@ type connection struct {
 	dstPort   uint16
 	protocol  uint8
 	connState uint8
+	acctBytes int
 }
 
 type tcpState struct {
@@ -51,6 +53,13 @@ type tcpState struct {
 	FIN bool
 	RST bool
 }
+
+type pair struct {
+	Key   int
+	Value int
+}
+
+type pairList []pair
 
 func main() {
 
@@ -158,20 +167,21 @@ func processPacket(packet gopacket.Packet) {
 		dstPort = uint16(udpPacket.DstPort)
 	}
 
-	// Get application layer info
-
 	// Check if this is a new TCP C->S connection or and established connection
-	if ipProto == 6 {
+	switch {
+
+	case ipProto == 6:
 		isConn, hash, _ := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
 		if isConn == true {
 			s := checkTCPState(state)
 			connectionTable[hash][0].connState = s
+			connectionTable[hash][0].acctBytes += packetLength
 		} else {
 			// Establish a new TCP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
 			s := checkTCPState(state)
 			if s == 1 {
-				conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, s}
+				conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, s, packetLength}
 				connectionTable[hash] = append(connectionTable[hash], conn)
 				// Update tcp connection stats for CPS count
 				newTCPConnectionsCreated[packetTime]++
@@ -180,32 +190,44 @@ func processPacket(packet gopacket.Packet) {
 			}
 		}
 		return
-	}
 
 	// Check if this is a new UDP C->S connection or and established connection
 	// In a firewall the conn will be deleted after N seconds of the last packet.
-	if ipProto == 17 {
+	case ipProto == 17:
 		isConn, hash, cs := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
 		if isConn == true {
 			if cs == 1 {
 				connectionTable[hash][0].connState = cs
+				connectionTable[hash][0].acctBytes += packetLength
 			} else if cs == 2 {
 				connectionTable[hash][0].connState = cs
+				connectionTable[hash][0].acctBytes += packetLength
 			}
 		} else {
 			// Establish a new UDP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
-			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1}
+			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1, packetLength}
 			connectionTable[hash] = append(connectionTable[hash], conn)
 			udpConnectionsStats[packetTime]++
 		}
 		return
-	}
 
+	}
 }
 
 //printResults prints the final results
 func printResults() {
+
+	// Find first and last packet times
+	var e []int
+	for f := range ppsStats {
+		e = append(e, f)
+	}
+	sort.Ints(e)
+
+	firstPacketTime := e[0]
+	lastPacketTime := e[len(e)-1]
+	totalTime := lastPacketTime - firstPacketTime
 
 	// Sort packetLengthStats
 	var a []int
@@ -223,14 +245,16 @@ func printResults() {
 		b := fmt.Sprintf(" <= %d", i)
 		resultsTable.AddRow(b, packetLengthStats[i])
 	}
+
 	totalPackets := 0
+
 	for _, j := range ppsStats {
 		totalPackets += j
 	}
-	packetRate := totalPackets / len(ppsStats)
-	averagePacketSize := totalBytes / totalPackets
 
-	averageThrougput := totalBytes / len(ppsStats)
+	packetRate := totalPackets / totalTime
+	averagePacketSize := totalBytes / totalPackets
+	averageThrougput := totalBytes / totalTime
 
 	// Create packet stats table
 	resultsTable.AddSeparator()
@@ -272,7 +296,7 @@ func printResults() {
 		}
 	}
 
-	tcpConnsPerSecond := totalTCPConns / len(ppsStats)
+	tcpConnsPerSecond := totalTCPConns / totalTime
 
 	totalUDPConns := 0
 	maxUDPConnsSec := 0
@@ -284,7 +308,7 @@ func printResults() {
 		}
 	}
 
-	udpConnsPerSecond := totalUDPConns / len(ppsStats)
+	udpConnsPerSecond := totalUDPConns / totalTime
 
 	resultsTable.AddRow("Connections Metrics", "++++++++")
 	resultsTable.AddSeparator()
@@ -300,11 +324,15 @@ func printResults() {
 		// Dump conn table
 		connectionTable.dumpConnTable()
 	}
+
+	if *topN > 0 {
+		connectionTable.topConnsByBytes(*topN)
+	}
 	return
 }
 
 //connectionHash creates 5-tuple hash used for the hash map connectionTable
-func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) uint64 {
+func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) int {
 
 	hash := uint(ipProto)
 	hashBits := uint(20)
@@ -318,7 +346,7 @@ func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, 
 		hash += (a * 59 >> (uint(32) - idx)) + (b * 59 >> idx) + (c * 59) + (d * 59)
 	}
 
-	return uint64(hash)
+	return int(hash)
 
 }
 
@@ -339,7 +367,7 @@ func ipToInt(ip net.IP) uint {
 }
 
 //connectionLoookup searches hash map connectionTable to see if a connection is already established
-func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) (bool, uint64, uint8) {
+func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, ipProto uint8) (bool, int, uint8) {
 
 	a := connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
 	b := connectionHash(dstIP, srcIP, dstPort, srcPort, ipProto)
@@ -372,16 +400,59 @@ func checkTCPState(t tcpState) uint8 {
 	}
 }
 
+//dumpConnTable prints out the contents of a connection table
 func (c connTable) dumpConnTable() {
 	a := "+------------------------------------+"
 	b := "+---+"
 	w := new(tabwriter.Writer)
 	w.Init(os.Stdout, 0, 8, 0, '\t', 0)
-	fmt.Fprintln(w, "src", "\t", "sport", "\t", "dst", "\t", "dport", "\t", "proto")
+	fmt.Fprintln(w, "src", "\t", "sport", "\t", "dst", "\t", "dport", "\t", "proto", "\t", "bytes")
 	for i := range c {
-		fmt.Fprintln(w, a, "\t", b, "\t", a, "\t", b, "\t", b)
-		fmt.Fprintln(w, c[i][0].srcAddr, "\t", c[i][0].srcPort, "\t", c[i][0].dstAddr, "\t", c[i][0].dstPort, "\t", c[i][0].protocol)
+		fmt.Fprintln(w, a, "\t", b, "\t", a, "\t", b, "\t", b, "\t", b)
+		fmt.Fprintln(w, c[i][0].srcAddr, "\t", c[i][0].srcPort, "\t", c[i][0].dstAddr, "\t", c[i][0].dstPort, "\t", c[i][0].protocol, "\t", c[i][0].acctBytes)
 	}
 	w.Flush()
 
 }
+
+func (c connTable) topConnsByBytes(n int) {
+
+	if len(c) < 1 {
+		return
+	}
+
+	//Map for storing hash and conn bytes
+	a := make(map[int]int)
+
+	for b := range c {
+		k := c[b][0].acctBytes
+		a[b] = k
+	}
+
+	//Create kv struct pairs for sorting
+	kvPair := make(pairList, len(a))
+
+	i := 0
+	for k, v := range a {
+		kvPair[i] = pair{k, v}
+		i++
+	}
+	sort.Sort(sort.Reverse(kvPair))
+	if len(kvPair) < n {
+		n = len(kvPair)
+	}
+	//Print table
+	topConnsByBytesTable := termtables.CreateTable()
+	topConnsByBytesTable.AddTitle("Top Connections by Bytes")
+	topConnsByBytesTable.AddHeaders("Bytes", "Src", "SrcPort", "Dst", "DstPort", "Proto")
+	for _, d := range kvPair[0 : n-1] {
+		e := c[d.Key][0]
+		topConnsByBytesTable.AddRow(e.acctBytes, e.srcAddr, e.srcPort, e.dstAddr, e.dstPort, e.protocol)
+	}
+	fmt.Println(topConnsByBytesTable.Render())
+
+}
+
+func (p pairList) Len() int           { return len(p) }
+func (p pairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
+func (p pairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
