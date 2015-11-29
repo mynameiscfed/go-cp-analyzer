@@ -24,12 +24,14 @@ var (
 	etherType                = make(map[string]int)
 	tcpStats                 = make(map[string]int)
 	udpStats                 = make(map[string]int)
-	connectionTable          = make(map[uint64][]connection)
+	connectionTable          = make(connTable)
 	newTCPConnectionsCreated = make(map[int]int)
 	udpConnectionsStats      = make(map[int]int)
 )
 
 // connection is a struct that holds IP connection information
+
+type connTable map[uint64][]connection
 
 type connection struct {
 	srcAddr   net.IP
