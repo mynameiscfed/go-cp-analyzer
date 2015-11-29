@@ -16,7 +16,7 @@ import (
 
 var (
 	pFile                    = flag.String("r", "", "pcap file name")
-	conntable                = flag.Bool("conntable", false, "dump connections table")
+	conntable                = flag.Bool("c", false, "dump connections table")
 	topN                     = flag.Int("n", 0, "top N connetions")
 	err                      error
 	handle                   *pcap.Handle
@@ -54,12 +54,19 @@ type tcpState struct {
 	RST bool
 }
 
-type pair struct {
+type intPair struct {
 	Key   int
 	Value int
 }
 
-type pairList []pair
+type intPairList []intPair
+
+type stringPair struct {
+	Key   string
+	Value int
+}
+
+type stringPairList []stringPair
 
 func main() {
 
@@ -320,14 +327,17 @@ func printResults() {
 	resultsTable.AddRow("UDP peak conns/sec", maxUDPConnsSec)
 	fmt.Println(resultsTable.Render())
 
+	if *topN > 0 {
+		connectionTable.topConnsByBytes(*topN)
+		connectionTable.topSrc(*topN)
+		connectionTable.topDst(*topN)
+	}
+
 	if *conntable == true {
 		// Dump conn table
 		connectionTable.dumpConnTable()
 	}
 
-	if *topN > 0 {
-		connectionTable.topConnsByBytes(*topN)
-	}
 	return
 }
 
@@ -430,14 +440,15 @@ func (c connTable) topConnsByBytes(n int) {
 	}
 
 	//Create kv struct pairs for sorting
-	kvPair := make(pairList, len(a))
+	kvPair := make(intPairList, len(a))
 
 	i := 0
 	for k, v := range a {
-		kvPair[i] = pair{k, v}
+		kvPair[i] = intPair{k, v}
 		i++
 	}
 	sort.Sort(sort.Reverse(kvPair))
+
 	if len(kvPair) < n {
 		n = len(kvPair)
 	}
@@ -453,6 +464,86 @@ func (c connTable) topConnsByBytes(n int) {
 
 }
 
-func (p pairList) Len() int           { return len(p) }
-func (p pairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
-func (p pairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (c connTable) topSrc(n int) {
+
+	if len(c) < 1 {
+		return
+	}
+
+	//Map for storing hash and IPs
+	a := make(map[string]int)
+
+	for b := range c {
+		k := c[b][0].srcAddr.String()
+		a[k]++
+	}
+
+	//Create kv struct intPairs for sorting
+	kvPair := make(stringPairList, len(a))
+
+	i := 0
+	for k, v := range a {
+		kvPair[i] = stringPair{k, v}
+		i++
+	}
+	sort.Sort(sort.Reverse(kvPair))
+
+	if len(kvPair) < n {
+		n = len(kvPair)
+	}
+
+	//Print table
+	topSrcIPTable := termtables.CreateTable()
+	topSrcIPTable.AddTitle("Top Src IP Addresses")
+	for _, d := range kvPair[0 : n-1] {
+		topSrcIPTable.AddRow(d.Value, d.Key)
+	}
+	fmt.Println(topSrcIPTable.Render())
+
+}
+
+func (c connTable) topDst(n int) {
+
+	if len(c) < 1 {
+		return
+	}
+
+	//Map for storing hash and IPs
+	a := make(map[string]int)
+
+	for b := range c {
+		k := c[b][0].dstAddr.String()
+		a[k]++
+	}
+
+	//Create kv struct intPairs for sorting
+	kvPair := make(stringPairList, len(a))
+
+	i := 0
+	for k, v := range a {
+		kvPair[i] = stringPair{k, v}
+		i++
+	}
+	sort.Sort(sort.Reverse(kvPair))
+
+	if len(kvPair) < n {
+		n = len(kvPair)
+	}
+
+	//Print table
+	topDstIPTable := termtables.CreateTable()
+	topDstIPTable.AddTitle("Top Dst IP Addresses")
+	for _, d := range kvPair[0 : n-1] {
+		topDstIPTable.AddRow(d.Value, d.Key)
+	}
+	fmt.Println(topDstIPTable.Render())
+
+}
+
+func (p intPairList) Len() int           { return len(p) }
+func (p intPairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
+func (p intPairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+func (p stringPairList) Len() int           { return len(p) }
+func (p stringPairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
+func (p stringPairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
