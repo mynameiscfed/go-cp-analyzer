@@ -9,7 +9,9 @@ import (
 	"github.com/google/gopacket/pcap"
 	"log"
 	"net"
+	"os"
 	"sort"
+	"text/tabwriter"
 )
 
 var (
@@ -212,18 +214,15 @@ func printResults() {
 	}
 	sort.Ints(a)
 
-	// Create packetLengthStats table
-	packetLengthTable := termtables.CreateTable()
-	packetLengthTable.Style.PaddingRight = 7
-	packetLengthTable.Style.PaddingLeft = 8
-	packetLengthTable.AddTitle("Packet Size Distribution")
-	packetLengthTable.AddHeaders("Size", "Count")
+	// Create table of results
+	resultsTable := termtables.CreateTable()
+	resultsTable.AddTitle("go-pcapmon v.001")
+	resultsTable.AddRow("Packet Distribution", "++++++++")
+	resultsTable.AddSeparator()
 	for _, i := range a {
 		b := fmt.Sprintf(" <= %d", i)
-		packetLengthTable.AddRow(b, packetLengthStats[i])
+		resultsTable.AddRow(b, packetLengthStats[i])
 	}
-	fmt.Println(packetLengthTable.Render())
-
 	totalPackets := 0
 	for _, j := range ppsStats {
 		totalPackets += j
@@ -234,16 +233,15 @@ func printResults() {
 	averageThrougput := totalBytes / len(ppsStats)
 
 	// Create packet stats table
-	packetStatsTable := termtables.CreateTable()
-	packetStatsTable.Style.PaddingRight = 4
-	packetStatsTable.Style.PaddingLeft = 4
-	packetStatsTable.AddTitle("Packet Metrics")
-	packetStatsTable.AddRow("Total pkts", totalPackets)
-	packetStatsTable.AddRow("Avg pkt size", averagePacketSize)
-	packetStatsTable.AddRow("Avg pkts/second", packetRate)
-	packetStatsTable.AddRow("Total bytes", totalBytes)
-	packetStatsTable.AddRow("Avg thoughput (Mbps)", float64(averageThrougput)*0.000008)
-	fmt.Println(packetStatsTable.Render())
+	resultsTable.AddSeparator()
+	resultsTable.AddRow("Packet Metrics", "++++++++")
+	resultsTable.AddSeparator()
+	resultsTable.AddRow("Total pkts", totalPackets)
+	resultsTable.AddRow("Avg pkt size", averagePacketSize)
+	resultsTable.AddRow("Avg pkts/second", packetRate)
+	resultsTable.AddRow("Total bytes", totalBytes)
+	resultsTable.AddRow("Avg thoughput (Mbps)", float64(averageThrougput)*0.000008)
+	resultsTable.AddSeparator()
 
 	// Sort protocols
 	var c []string
@@ -253,20 +251,16 @@ func printResults() {
 	sort.Strings(c)
 
 	// Create protocol table
-	protocolStatsTable := termtables.CreateTable()
-	protocolStatsTable.Style.PaddingRight = 6
-	protocolStatsTable.Style.PaddingLeft = 7
-	protocolStatsTable.AddTitle("Protocol Metrics")
-	protocolStatsTable.AddHeaders("Protocol", "Count")
-	protocolStatsTable.AddRow("Ethernet", ethernetStats["count"])
-	protocolStatsTable.AddRow("TCP", tcpStats["count"])
-	protocolStatsTable.AddRow("UDP", udpStats["count"])
-	protocolStatsTable.AddRow("!Ethernet", ethernetStats["countErr"])
-	protocolStatsTable.AddSeparator()
+	resultsTable.AddRow("Protocol Metrics", "++++++++")
+	resultsTable.AddSeparator()
+	resultsTable.AddRow("Ethernet", ethernetStats["count"])
+	resultsTable.AddRow("TCP", tcpStats["count"])
+	resultsTable.AddRow("UDP", udpStats["count"])
+	resultsTable.AddRow("!Ethernet", ethernetStats["countErr"])
 	for _, j := range c {
-		protocolStatsTable.AddRow(j, etherType[j])
+		resultsTable.AddRow(j, etherType[j])
 	}
-	fmt.Println(protocolStatsTable.Render())
+	resultsTable.AddSeparator()
 
 	totalTCPConns := 0
 	maxTCPConnsSec := 0
@@ -292,30 +286,19 @@ func printResults() {
 
 	udpConnsPerSecond := totalUDPConns / len(ppsStats)
 
-	connectionStatsTable := termtables.CreateTable()
-	connectionStatsTable.Style.PaddingRight = 5
-	connectionStatsTable.Style.PaddingLeft = 5
-	connectionStatsTable.AddTitle("Connections Metrics")
-	connectionStatsTable.AddRow("TCP connections", totalTCPConns)
-	connectionStatsTable.AddRow("TCP conns/sec (avg) ", tcpConnsPerSecond)
-	connectionStatsTable.AddRow("TCP peak conns/sec", maxTCPConnsSec)
-	connectionStatsTable.AddSeparator()
-	connectionStatsTable.AddRow("UDP connections", totalUDPConns)
-	connectionStatsTable.AddRow("UDP conns/sec (avg)", udpConnsPerSecond)
-	connectionStatsTable.AddRow("UDP peak conns/sec", maxUDPConnsSec)
-	fmt.Println(connectionStatsTable.Render())
+	resultsTable.AddRow("Connections Metrics", "++++++++")
+	resultsTable.AddSeparator()
+	resultsTable.AddRow("TCP connections", totalTCPConns)
+	resultsTable.AddRow("TCP conns/sec (avg) ", tcpConnsPerSecond)
+	resultsTable.AddRow("TCP peak conns/sec", maxTCPConnsSec)
+	resultsTable.AddRow("UDP connections", totalUDPConns)
+	resultsTable.AddRow("UDP conns/sec (avg)", udpConnsPerSecond)
+	resultsTable.AddRow("UDP peak conns/sec", maxUDPConnsSec)
+	fmt.Println(resultsTable.Render())
 
 	if *conntable == true {
 		// Dump conn table
-		cT := termtables.CreateTable()
-		cT.AddTitle("Connections Table")
-		cT.Style.PaddingLeft = 1
-		cT.Style.PaddingRight = 1
-		for i := range connectionTable {
-			cT.AddRow(i, connectionTable[i][0].srcAddr, connectionTable[i][0].srcPort, connectionTable[i][0].dstAddr, connectionTable[i][0].dstPort, connectionTable[i][0].protocol)
-			cT.AddSeparator()
-		}
-		fmt.Println(cT.Render())
+		connectionTable.dumpConnTable()
 	}
 	return
 }
@@ -387,4 +370,18 @@ func checkTCPState(t tcpState) uint8 {
 	default:
 		return 5
 	}
+}
+
+func (c connTable) dumpConnTable() {
+	a := "+------------------------------------+"
+	b := "+---+"
+	w := new(tabwriter.Writer)
+	w.Init(os.Stdout, 0, 8, 0, '\t', 0)
+	fmt.Fprintln(w, "src", "\t", "sport", "\t", "dst", "\t", "dport", "\t", "proto")
+	for i := range c {
+		fmt.Fprintln(w, a, "\t", b, "\t", a, "\t", b, "\t", b)
+		fmt.Fprintln(w, c[i][0].srcAddr, "\t", c[i][0].srcPort, "\t", c[i][0].dstAddr, "\t", c[i][0].dstPort, "\t", c[i][0].protocol)
+	}
+	w.Flush()
+
 }
