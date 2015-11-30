@@ -488,15 +488,26 @@ func (c connTable) topSrc(n int) {
 	}
 	sort.Sort(sort.Reverse(kvPair))
 
-	if len(kvPair) < n {
-		n = len(kvPair)
-	}
-
 	//Print table
 	topSrcIPTable := termtables.CreateTable()
-	topSrcIPTable.AddTitle("Top Src IP Addresses")
-	for _, d := range kvPair[0 : n-1] {
-		topSrcIPTable.AddRow(d.Value, d.Key)
+	topSrcIPTable.AddTitle("Top Dst IP Addresses")
+	switch {
+    case len(kvPair) > n :
+         for _, d := range kvPair[:n-1] {
+             topSrcIPTable.AddRow(d.Value, d.Key)
+         }
+	case len(kvPair) < n && len(kvPair) > 1:
+		n = len(kvPair)
+		for _, d := range kvPair[:n-1] {
+			topSrcIPTable.AddRow(d.Value, d.Key)
+		}
+	case len(kvPair) == 1:
+		for _, d := range kvPair {
+			topSrcIPTable.AddRow(d.Value, d.Key)
+		}
+	default:
+        fmt.Println("n: ", n)
+		return
 	}
 	fmt.Println(topSrcIPTable.Render())
 
@@ -526,18 +537,28 @@ func (c connTable) topDst(n int) {
 	}
 	sort.Sort(sort.Reverse(kvPair))
 
-	if len(kvPair) < n {
-		n = len(kvPair)
-	}
-
 	//Print table
 	topDstIPTable := termtables.CreateTable()
 	topDstIPTable.AddTitle("Top Dst IP Addresses")
-	for _, d := range kvPair[0 : n-1] {
-		topDstIPTable.AddRow(d.Value, d.Key)
+	switch {
+    case len(kvPair) > n :
+		for _, d := range kvPair[:n-1] {
+			topDstIPTable.AddRow(d.Value, d.Key)
+		}
+	case len(kvPair) < n && len(kvPair) > 1:
+		n = len(kvPair)
+		for _, d := range kvPair[:n-1] {
+			topDstIPTable.AddRow(d.Value, d.Key)
+		}
+	case len(kvPair) == 1:
+
+		for _, d := range kvPair {
+			topDstIPTable.AddRow(d.Value, d.Key)
+		}
+	default:
+		return
 	}
 	fmt.Println(topDstIPTable.Render())
-
 }
 
 func (p intPairList) Len() int           { return len(p) }
