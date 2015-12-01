@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	pFile                    = flag.String("r", "", "pcap file name")
+	pFile                    = flag.String("r", "", "pcap `file name` ")
 	conntable                = flag.Bool("c", false, "dump connections table")
-	topN                     = flag.Int("n", 0, "top N connetions")
+	topN                     = flag.Int("n", 0, "top N connections")
 	err                      error
 	handle                   *pcap.Handle
 	totalBytes               = 0
@@ -43,7 +43,12 @@ type connection struct {
 	dstPort   uint16
 	protocol  uint8
 	connState uint8
-	acctBytes int
+	account   accounting
+}
+
+type accounting struct {
+	bytes   int
+	packets int
 }
 
 type tcpState struct {
@@ -182,13 +187,14 @@ func processPacket(packet gopacket.Packet) {
 		if isConn == true {
 			s := checkTCPState(state)
 			connectionTable[hash][0].connState = s
-			connectionTable[hash][0].acctBytes += packetLength
+			connectionTable[hash][0].account.bytes += packetLength
+			connectionTable[hash][0].account.packets++
 		} else {
 			// Establish a new TCP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
 			s := checkTCPState(state)
 			if s == 1 {
-				conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, s, packetLength}
+				conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, s, accounting{packetLength, 1}}
 				connectionTable[hash] = append(connectionTable[hash], conn)
 				// Update tcp connection stats for CPS count
 				newTCPConnectionsCreated[packetTime]++
@@ -205,15 +211,17 @@ func processPacket(packet gopacket.Packet) {
 		if isConn == true {
 			if cs == 1 {
 				connectionTable[hash][0].connState = cs
-				connectionTable[hash][0].acctBytes += packetLength
+				connectionTable[hash][0].account.bytes += packetLength
+				connectionTable[hash][0].account.packets++
 			} else if cs == 2 {
 				connectionTable[hash][0].connState = cs
-				connectionTable[hash][0].acctBytes += packetLength
+				connectionTable[hash][0].account.bytes += packetLength
+				connectionTable[hash][0].account.packets++
 			}
 		} else {
 			// Establish a new UDP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
-			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1, packetLength}
+			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1, accounting{packetLength, 1}}
 			connectionTable[hash] = append(connectionTable[hash], conn)
 			udpConnectionsStats[packetTime]++
 		}
@@ -385,8 +393,9 @@ func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint1
 		return true, a, 1
 	} else if _, ok := connectionTable[b]; ok {
 		return true, b, 2
+	} else {
+		return false, 0, 0
 	}
-	return false, 0, 0
 }
 
 // checkTcpState returns the state of a connection
@@ -416,10 +425,10 @@ func (c connTable) dumpConnTable() {
 	b := "+---+"
 	w := new(tabwriter.Writer)
 	w.Init(os.Stdout, 0, 8, 0, '\t', 0)
-	fmt.Fprintln(w, "src", "\t", "sport", "\t", "dst", "\t", "dport", "\t", "proto", "\t", "bytes")
+	fmt.Fprintln(w, "src", "\t", "sport", "\t", "dst", "\t", "dport", "\t", "proto", "\t", "bytes", "\t", "pkts")
 	for i := range c {
-		fmt.Fprintln(w, a, "\t", b, "\t", a, "\t", b, "\t", b, "\t", b)
-		fmt.Fprintln(w, c[i][0].srcAddr, "\t", c[i][0].srcPort, "\t", c[i][0].dstAddr, "\t", c[i][0].dstPort, "\t", c[i][0].protocol, "\t", c[i][0].acctBytes)
+		fmt.Fprintln(w, a, "\t", b, "\t", a, "\t", b, "\t", b, "\t", b, "\t", b)
+		fmt.Fprintln(w, c[i][0].srcAddr, "\t", c[i][0].srcPort, "\t", c[i][0].dstAddr, "\t", c[i][0].dstPort, "\t", c[i][0].protocol, "\t", c[i][0].account.bytes, "\t", c[i][0].account.packets)
 	}
 	w.Flush()
 
@@ -435,7 +444,7 @@ func (c connTable) topConnsByBytes(n int) {
 	a := make(map[int]int)
 
 	for b := range c {
-		k := c[b][0].acctBytes
+		k := c[b][0].account.bytes
 		a[b] = k
 	}
 
@@ -455,13 +464,12 @@ func (c connTable) topConnsByBytes(n int) {
 	//Print table
 	topConnsByBytesTable := termtables.CreateTable()
 	topConnsByBytesTable.AddTitle("Top Connections by Bytes")
-	topConnsByBytesTable.AddHeaders("Bytes", "Src", "SrcPort", "Dst", "DstPort", "Proto")
+	topConnsByBytesTable.AddHeaders("Bytes", "Packets", "Source", "sPort", "Destination", "dPort", "Proto")
 	for _, d := range kvPair[0 : n-1] {
 		e := c[d.Key][0]
-		topConnsByBytesTable.AddRow(e.acctBytes, e.srcAddr, e.srcPort, e.dstAddr, e.dstPort, e.protocol)
+		topConnsByBytesTable.AddRow(e.account.bytes, e.account.packets, e.srcAddr, e.srcPort, e.dstAddr, e.dstPort, e.protocol)
 	}
 	fmt.Println(topConnsByBytesTable.Render())
-
 }
 
 func (c connTable) topSrc(n int) {
@@ -492,10 +500,10 @@ func (c connTable) topSrc(n int) {
 	topSrcIPTable := termtables.CreateTable()
 	topSrcIPTable.AddTitle("Top Dst IP Addresses")
 	switch {
-    case len(kvPair) > n :
-         for _, d := range kvPair[:n-1] {
-             topSrcIPTable.AddRow(d.Value, d.Key)
-         }
+	case len(kvPair) > n:
+		for _, d := range kvPair[:n-1] {
+			topSrcIPTable.AddRow(d.Value, d.Key)
+		}
 	case len(kvPair) < n && len(kvPair) > 1:
 		n = len(kvPair)
 		for _, d := range kvPair[:n-1] {
@@ -506,11 +514,10 @@ func (c connTable) topSrc(n int) {
 			topSrcIPTable.AddRow(d.Value, d.Key)
 		}
 	default:
-        fmt.Println("n: ", n)
+		fmt.Println("n: ", n)
 		return
 	}
 	fmt.Println(topSrcIPTable.Render())
-
 }
 
 func (c connTable) topDst(n int) {
@@ -541,7 +548,7 @@ func (c connTable) topDst(n int) {
 	topDstIPTable := termtables.CreateTable()
 	topDstIPTable.AddTitle("Top Dst IP Addresses")
 	switch {
-    case len(kvPair) > n :
+	case len(kvPair) > n:
 		for _, d := range kvPair[:n-1] {
 			topDstIPTable.AddRow(d.Value, d.Key)
 		}
