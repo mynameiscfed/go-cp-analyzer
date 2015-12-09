@@ -361,7 +361,7 @@ func connectionHash(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint16, 
 	d := uint(dstPort)
 
 	for idx := uint(0); idx < 32; idx += hashBits {
-		hash += (a * 59 >> (uint(32) - idx)) + (b * 59 >> idx) + (c * 59) + (d * 59)
+		hash += (a * 17 >> (uint(32) - idx)) + (b * 17 >> idx) + (c * 17) + (d * 17)
 	}
 
 	return int(hash)
@@ -398,7 +398,7 @@ func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint1
 	}
 }
 
-// checkTcpState returns the state of a connection
+// checkTcpState returns the simple TCP state of a connection
 // 1 C->S connection
 // 2 S->C reply
 // 3 C->S established / ACK only
@@ -406,12 +406,16 @@ func connectionLoookup(srcIP net.IP, dstIP net.IP, srcPort uint16, dstPort uint1
 // 5 no match - in a connection
 func checkTCPState(t tcpState) uint8 {
 	switch {
+	// SYN sent state
 	case t.SYN == true && t.ACK == false && t.RST == false && t.FIN == false && t.PSH == false:
 		return 1
+	// SYN received state
 	case t.SYN == true && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false:
 		return 2
+	// EST state
 	case t.SYN == false && t.ACK == true && t.RST == false && t.FIN == false && t.PSH == false:
 		return 3
+	// CLOSE state
 	case t.FIN == true || t.RST == true:
 		return 4
 	default:
