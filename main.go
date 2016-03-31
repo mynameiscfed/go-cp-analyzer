@@ -3,15 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/apcera/termtables"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
 	"log"
 	"net"
 	"os"
 	"sort"
 	"text/tabwriter"
+
+	"github.com/apcera/termtables"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
 )
 
 var (
@@ -502,7 +503,7 @@ func (c connTable) topSrc(n int) {
 
 	//Print table
 	topSrcIPTable := termtables.CreateTable()
-	topSrcIPTable.AddTitle("Top Dst IP Addresses")
+	topSrcIPTable.AddTitle("Top Src IP Addresses")
 	switch {
 	case len(kvPair) > n:
 		for _, d := range kvPair[:n-1] {
