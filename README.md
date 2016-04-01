@@ -1,6 +1,6 @@
 # Go Captured Packet Analyzer
 
-A small tool that uses the go-packet library to analyze a packet capture and print out statistics about it.
+A small tool that uses the [gopacket](https://github.com/google/gopacket) library to analyze a packet capture and print out statistics about it.
 
 ## Features
 
