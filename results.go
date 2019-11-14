@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/apcera/termtables"
+	"github.com/geoffreybauduin/termtables"
 )
 
 type intPair struct {
