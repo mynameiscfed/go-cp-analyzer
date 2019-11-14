@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/geoffreybauduin/termtables"
+	"github.com/mynameiscfed/termtables"
 )
 
 type intPair struct {
