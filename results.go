@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 
 	"github.com/mynameiscfed/termtables"
+	"github.com/olekukonko/tablewriter"
 )
 
 type intPair struct {
@@ -23,6 +26,7 @@ type stringPairList []stringPair
 
 //printResults prints the final results
 func printResults() {
+	table := tablewriter.NewWriter(os.Stdout)
 
 	// Find first and last packet times
 	var e []int
@@ -41,6 +45,14 @@ func printResults() {
 		a = append(a, b)
 	}
 	sort.Ints(a)
+
+	table.SetHeader([]string{"Packet Distribution", "++++++++"})
+	for _, i := range a {
+		b := fmt.Sprintf(" <= %d", i)
+		table.Append([]string{b, strconv.Itoa(packetLengthStats[i])})
+	}
+
+	table.Render()
 
 	// Create table of results
 	resultsTable := termtables.CreateTable()
