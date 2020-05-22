@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 
-	"github.com/mynameiscfed/termtables"
+	"github.com/olekukonko/tablewriter"
 )
 
 type intPair struct {
@@ -21,8 +23,21 @@ type stringPair struct {
 
 type stringPairList []stringPair
 
+const COLUMN_HEADER = ""
+
+func newFormattedTableWriter() *tablewriter.Table {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetColMinWidth(0, 30)
+	table.SetColMinWidth(1, 20)
+	table.SetAutoFormatHeaders(false)
+	table.SetTablePadding("\t")
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	return table
+}
+
 //printResults prints the final results
 func printResults() {
+	var table *tablewriter.Table
 
 	// Find first and last packet times
 	var e []int
@@ -42,15 +57,13 @@ func printResults() {
 	}
 	sort.Ints(a)
 
-	// Create table of results
-	resultsTable := termtables.CreateTable()
-	resultsTable.AddTitle("go-pcapmon v.001")
-	resultsTable.AddRow("Packet Distribution", "++++++++")
-	resultsTable.AddSeparator()
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Packet Distribution", COLUMN_HEADER})
 	for _, i := range a {
 		b := fmt.Sprintf(" <= %d", i)
-		resultsTable.AddRow(b, packetLengthStats[i])
+		table.Append([]string{b, strconv.Itoa(packetLengthStats[i])})
 	}
+	table.Render()
 
 	totalPackets := 0
 
@@ -62,16 +75,13 @@ func printResults() {
 	averagePacketSize := totalBytes / totalPackets
 	averageThrougput := totalBytes / totalTime
 
-	// Create packet stats table
-	resultsTable.AddSeparator()
-	resultsTable.AddRow("Packet Metrics", "++++++++")
-	resultsTable.AddSeparator()
-	resultsTable.AddRow("Total pkts", totalPackets)
-	resultsTable.AddRow("Avg pkt size", averagePacketSize)
-	resultsTable.AddRow("Avg pkts/second", packetRate)
-	resultsTable.AddRow("Total bytes", totalBytes)
-	resultsTable.AddRow("Avg thoughput (Mbps)", float64(averageThrougput)*0.000008)
-	resultsTable.AddSeparator()
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Packet Metrics", COLUMN_HEADER})
+	table.Append([]string{"Total pkts", strconv.Itoa(totalPackets)})
+	table.Append([]string{"Avg pkt size", strconv.Itoa(averagePacketSize)})
+	table.Append([]string{"Avg pkts/second", strconv.Itoa(packetRate)})
+	table.Append([]string{"Avg thoughput (Mbps)", strconv.FormatFloat(float64(averageThrougput)*0.000008, 'f', 2, 64)})
+	table.Render()
 
 	// Sort protocols
 	var c []string
@@ -81,16 +91,17 @@ func printResults() {
 	sort.Strings(c)
 
 	// Create protocol table
-	resultsTable.AddRow("Protocol Metrics", "++++++++")
-	resultsTable.AddSeparator()
-	resultsTable.AddRow("Ethernet", ethernetStats["count"])
-	resultsTable.AddRow("TCP", tcpStats["count"])
-	resultsTable.AddRow("UDP", udpStats["count"])
-	resultsTable.AddRow("!Ethernet", ethernetStats["countErr"])
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Protocol Metrics", COLUMN_HEADER})
+	table.Append([]string{"Ethernet", strconv.Itoa(ethernetStats["count"])})
+	table.Append([]string{"TCP", strconv.Itoa(tcpStats["count"])})
+	table.Append([]string{"UDP", strconv.Itoa(udpStats["count"])})
+	table.Append([]string{"!Ethernet", strconv.Itoa(ethernetStats["countErr"])})
+
 	for _, j := range c {
-		resultsTable.AddRow(j, etherType[j])
+		table.Append([]string{j, strconv.Itoa(etherType[j])})
 	}
-	resultsTable.AddSeparator()
+	table.Render()
 
 	totalTCPConns := 0
 	maxTCPConnsSec := 0
@@ -116,15 +127,15 @@ func printResults() {
 
 	udpConnsPerSecond := totalUDPConns / totalTime
 
-	resultsTable.AddRow("Connections Metrics", "++++++++")
-	resultsTable.AddSeparator()
-	resultsTable.AddRow("TCP connections", totalTCPConns)
-	resultsTable.AddRow("TCP conns/sec (avg) ", tcpConnsPerSecond)
-	resultsTable.AddRow("TCP peak conns/sec", maxTCPConnsSec)
-	resultsTable.AddRow("UDP connections", totalUDPConns)
-	resultsTable.AddRow("UDP conns/sec (avg)", udpConnsPerSecond)
-	resultsTable.AddRow("UDP peak conns/sec", maxUDPConnsSec)
-	fmt.Println(resultsTable.Render())
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Connections Metrics", COLUMN_HEADER})
+	table.Append([]string{"TCP connections", strconv.Itoa(totalTCPConns)})
+	table.Append([]string{"TCP conns/sec (avg)", strconv.Itoa(tcpConnsPerSecond)})
+	table.Append([]string{"TCP peak conns/sec", strconv.Itoa(maxTCPConnsSec)})
+	table.Append([]string{"UDP connections", strconv.Itoa(totalUDPConns)})
+	table.Append([]string{"UDP conns/sec (avg)", strconv.Itoa(udpConnsPerSecond)})
+	table.Append([]string{"UDP peak conns/sec", strconv.Itoa(maxUDPConnsSec)})
+	table.Render()
 
 	if *topN > 0 {
 		connectionTable.topConnsByBytes(*topN)
@@ -167,15 +178,17 @@ func (c connTable) topConnsByBytes(n int) {
 	if len(kvPair) < n {
 		n = len(kvPair)
 	}
-	//Print table
-	topConnsByBytesTable := termtables.CreateTable()
-	topConnsByBytesTable.AddTitle("Top Connections by Bytes")
-	topConnsByBytesTable.AddHeaders("Bytes", "Packets", "Source", "sPort", "Destination", "dPort", "Proto")
+	var table *tablewriter.Table
+
+	fmt.Println("Top Connections by Bytes")
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Bytes", "Packets", "Source IP", "Source Port", "Destination IP", "Destination Port", "Protocol"})
 	for _, d := range kvPair[0 : n-1] {
 		e := c[d.Key][0]
-		topConnsByBytesTable.AddRow(e.account.bytes, e.account.packets, e.srcAddr, e.srcPort, e.dstAddr, e.dstPort, e.protocol)
+		table.Append([]string{strconv.Itoa(e.account.bytes), strconv.Itoa(e.account.packets), e.srcAddr.String(), strconv.Itoa(int(e.srcPort)), e.dstAddr.String(), strconv.Itoa(int(e.dstPort)), strconv.Itoa(int(e.protocol))})
+
 	}
-	fmt.Println(topConnsByBytesTable.Render())
+	table.Render()
 }
 
 func (c connTable) topSrc(n int) {
@@ -203,27 +216,30 @@ func (c connTable) topSrc(n int) {
 	sort.Sort(sort.Reverse(kvPair))
 
 	//Print table
-	topSrcIPTable := termtables.CreateTable()
-	topSrcIPTable.AddTitle("Top Src IP Addresses")
+	var table *tablewriter.Table
+
+	fmt.Println("Top Source IP Addresses")
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Hits", "IP Address"})
 	switch {
 	case len(kvPair) > n:
 		for _, d := range kvPair[:n-1] {
-			topSrcIPTable.AddRow(d.Value, d.Key)
+			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	case len(kvPair) < n && len(kvPair) > 1:
 		n = len(kvPair)
 		for _, d := range kvPair[:n-1] {
-			topSrcIPTable.AddRow(d.Value, d.Key)
+			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	case len(kvPair) == 1:
 		for _, d := range kvPair {
-			topSrcIPTable.AddRow(d.Value, d.Key)
+			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	default:
 		fmt.Println("n: ", n)
 		return
 	}
-	fmt.Println(topSrcIPTable.Render())
+	table.Render()
 }
 
 func (c connTable) topDst(n int) {
@@ -251,27 +267,30 @@ func (c connTable) topDst(n int) {
 	sort.Sort(sort.Reverse(kvPair))
 
 	//Print table
-	topDstIPTable := termtables.CreateTable()
-	topDstIPTable.AddTitle("Top Dst IP Addresses")
+	var table *tablewriter.Table
+
+	fmt.Println("Top Destination IP Addresses")
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Hits", "IP Address"})
 	switch {
 	case len(kvPair) > n:
 		for _, d := range kvPair[:n-1] {
-			topDstIPTable.AddRow(d.Value, d.Key)
+			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	case len(kvPair) < n && len(kvPair) > 1:
 		n = len(kvPair)
 		for _, d := range kvPair[:n-1] {
-			topDstIPTable.AddRow(d.Value, d.Key)
+			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	case len(kvPair) == 1:
 
 		for _, d := range kvPair {
-			topDstIPTable.AddRow(d.Value, d.Key)
+			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	default:
 		return
 	}
-	fmt.Println(topDstIPTable.Render())
+	table.Render()
 }
 
 func (p intPairList) Len() int           { return len(p) }

@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 	"net"
-	"os"
-	"text/tabwriter"
+	"strconv"
+
+	"github.com/olekukonko/tablewriter"
 )
 
 // connection is a struct that holds IP connection information
@@ -110,15 +111,14 @@ func checkTCPState(t tcpState) uint8 {
 
 //dumpConnTable prints out the contents of a connection table
 func (c connTable) dumpConnTable() {
-	a := "+------------------------------------+"
-	b := "+---+"
-	w := new(tabwriter.Writer)
-	w.Init(os.Stdout, 0, 8, 0, '\t', 0)
-	fmt.Fprintln(w, "src", "\t", "sport", "\t", "dst", "\t", "dport", "\t", "proto", "\t", "bytes", "\t", "pkts")
+
+	fmt.Println("Connection Table")
+	var table *tablewriter.Table
+	table = newFormattedTableWriter()
+	table.SetHeader([]string{"Source IP", "Source Port", "Destination IP", "Destination Port", "Protocol", "Bytes", "Packets"})
 	for i := range c {
-		fmt.Fprintln(w, a, "\t", b, "\t", a, "\t", b, "\t", b, "\t", b, "\t", b)
-		fmt.Fprintln(w, c[i][0].srcAddr, "\t", c[i][0].srcPort, "\t", c[i][0].dstAddr, "\t", c[i][0].dstPort, "\t", c[i][0].protocol, "\t", c[i][0].account.bytes, "\t", c[i][0].account.packets)
+		table.Append([]string{c[i][0].srcAddr.String(), strconv.Itoa(int(c[i][0].srcPort)), c[i][0].dstAddr.String(), strconv.Itoa(int(c[i][0].dstPort)), strconv.Itoa(int(c[i][0].protocol)), strconv.Itoa(c[i][0].account.bytes), strconv.Itoa(c[i][0].account.packets)})
 	}
-	w.Flush()
+	table.Render()
 
 }
