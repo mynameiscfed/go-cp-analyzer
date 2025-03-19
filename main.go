@@ -12,6 +12,7 @@ var (
 	pFile                    = flag.String("r", "", "pcap `file name` ")
 	conntable                = flag.Bool("c", false, "dump connections table")
 	topN                     = flag.Int("n", 0, "top N connections")
+	histogram                = flag.Bool("h", false, "show packet length histogram")
 	err                      error
 	handle                   *pcap.Handle
 	totalBytes               = 0

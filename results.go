@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/olekukonko/tablewriter"
 )
@@ -35,7 +36,40 @@ func newFormattedTableWriter() *tablewriter.Table {
 	return table
 }
 
-//printResults prints the final results
+// printHistogram creates and displays an ASCII histogram of packet lengths
+func printHistogram(stats map[int]int) {
+	// Find max value for scaling
+	maxValue := 0
+	for _, v := range stats {
+		if v > maxValue {
+			maxValue = v
+		}
+	}
+
+	// Sort keys for consistent display
+	var keys []int
+	for k := range stats {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	// Calculate width for the histogram
+	const maxWidth = 50
+	const barChar = "█"
+
+	fmt.Println("\nPacket Length Histogram")
+	fmt.Println("----------------------")
+	for _, k := range keys {
+		v := stats[k]
+		// Scale the bar length to maxWidth
+		barLength := int(float64(v) / float64(maxValue) * maxWidth)
+		bar := strings.Repeat(barChar, barLength)
+		fmt.Printf("%5d: %s (%d)\n", k, bar, v)
+	}
+	fmt.Println("----------------------")
+}
+
+// printResults prints the final results
 func printResults() {
 	var table *tablewriter.Table
 
@@ -56,6 +90,11 @@ func printResults() {
 		a = append(a, b)
 	}
 	sort.Ints(a)
+
+	// Print histogram if enabled
+	if *histogram {
+		printHistogram(packetLengthStats)
+	}
 
 	table = newFormattedTableWriter()
 	table.SetHeader([]string{"Packet Distribution", COLUMN_HEADER})
@@ -148,7 +187,6 @@ func printResults() {
 		connectionTable.dumpConnTable()
 	}
 
-	return
 }
 
 func (c connTable) topConnsByBytes(n int) {
@@ -183,10 +221,9 @@ func (c connTable) topConnsByBytes(n int) {
 	fmt.Println("Top Connections by Bytes")
 	table = newFormattedTableWriter()
 	table.SetHeader([]string{"Bytes", "Packets", "Source IP", "Source Port", "Destination IP", "Destination Port", "Protocol"})
-	for _, d := range kvPair[0 : n-1] {
+	for _, d := range kvPair[0:n] {
 		e := c[d.Key][0]
 		table.Append([]string{strconv.Itoa(e.account.bytes), strconv.Itoa(e.account.packets), e.srcAddr.String(), strconv.Itoa(int(e.srcPort)), e.dstAddr.String(), strconv.Itoa(int(e.dstPort)), strconv.Itoa(int(e.protocol))})
-
 	}
 	table.Render()
 }
@@ -223,15 +260,11 @@ func (c connTable) topSrc(n int) {
 	table.SetHeader([]string{"Hits", "IP Address"})
 	switch {
 	case len(kvPair) > n:
-		for _, d := range kvPair[:n-1] {
+		for _, d := range kvPair[:n] {
 			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	case len(kvPair) < n && len(kvPair) > 1:
 		n = len(kvPair)
-		for _, d := range kvPair[:n-1] {
-			table.Append([]string{strconv.Itoa(d.Value), d.Key})
-		}
-	case len(kvPair) == 1:
 		for _, d := range kvPair {
 			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
@@ -274,12 +307,12 @@ func (c connTable) topDst(n int) {
 	table.SetHeader([]string{"Hits", "IP Address"})
 	switch {
 	case len(kvPair) > n:
-		for _, d := range kvPair[:n-1] {
+		for _, d := range kvPair[:n] {
 			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	case len(kvPair) < n && len(kvPair) > 1:
 		n = len(kvPair)
-		for _, d := range kvPair[:n-1] {
+		for _, d := range kvPair {
 			table.Append([]string{strconv.Itoa(d.Value), d.Key})
 		}
 	case len(kvPair) == 1:

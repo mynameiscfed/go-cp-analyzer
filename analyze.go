@@ -42,7 +42,11 @@ func processPacket(packet gopacket.Packet) {
 	// Get the Ethernet stats
 	ethernetLayer := packet.Layer(layers.LayerTypeEthernet)
 	if ethernetLayer != nil {
-		ethernetPacket, _ := ethernetLayer.(*layers.Ethernet)
+		ethernetPacket, ok := ethernetLayer.(*layers.Ethernet)
+		if !ok {
+			ethernetStats["countErr"]++
+			return
+		}
 		a := fmt.Sprintf(ethernetPacket.EthernetType.String())
 		etherType[a]++
 		ethernetStats["count"]++
@@ -59,7 +63,10 @@ func processPacket(packet gopacket.Packet) {
 	// Get IPv4 info
 	ipv4Layer := packet.Layer(layers.LayerTypeIPv4)
 	if ipv4Layer != nil {
-		ipv4Packet, _ := ipv4Layer.(*layers.IPv4)
+		ipv4Packet, ok := ipv4Layer.(*layers.IPv4)
+		if !ok {
+			return
+		}
 		srcIP = ipv4Packet.SrcIP
 		dstIP = ipv4Packet.DstIP
 		ipProto = uint8(ipv4Packet.Protocol)
@@ -68,10 +75,18 @@ func processPacket(packet gopacket.Packet) {
 	// Get IPv6 info
 	ipv6Layer := packet.Layer(layers.LayerTypeIPv6)
 	if ipv6Layer != nil {
-		ipv6Packet, _ := ipv6Layer.(*layers.IPv6)
+		ipv6Packet, ok := ipv6Layer.(*layers.IPv6)
+		if !ok {
+			return
+		}
 		srcIP = ipv6Packet.SrcIP
 		dstIP = ipv6Packet.DstIP
 		ipProto = uint8(ipv6Packet.NextHeader)
+	}
+
+	// Skip if we don't have IP information
+	if srcIP == nil || dstIP == nil {
+		return
 	}
 
 	// Get TCP info
@@ -97,7 +112,7 @@ func processPacket(packet gopacket.Packet) {
 	switch {
 
 	case ipProto == 6:
-		isConn, hash, _ := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
+		isConn, hash, _ := connectionLookup(srcIP, dstIP, srcPort, dstPort, ipProto)
 		if isConn == true {
 			s := checkTCPState(state)
 			connectionTable[hash][0].connState = s
@@ -121,20 +136,15 @@ func processPacket(packet gopacket.Packet) {
 	// Check if this is a new UDP C->S connection or and established connection
 	// In a firewall the conn will be deleted after N seconds of the last packet.
 	case ipProto == 17:
-		isConn, hash, cs := connectionLoookup(srcIP, dstIP, srcPort, dstPort, ipProto)
+		isConn, hash, _ := connectionLookup(srcIP, dstIP, srcPort, dstPort, ipProto)
 		if isConn == true {
-			if cs == 1 {
-				connectionTable[hash][0].connState = cs
-				connectionTable[hash][0].account.bytes += packetLength
-				connectionTable[hash][0].account.packets++
-			} else if cs == 2 {
-				connectionTable[hash][0].connState = cs
-				connectionTable[hash][0].account.bytes += packetLength
-				connectionTable[hash][0].account.packets++
-			}
+			// For UDP, we just update the accounting info
+			connectionTable[hash][0].account.bytes += packetLength
+			connectionTable[hash][0].account.packets++
 		} else {
 			// Establish a new UDP connection
 			hash = connectionHash(srcIP, dstIP, srcPort, dstPort, ipProto)
+			// UDP connections are always in state 1 (established)
 			conn := connection{srcIP, dstIP, srcPort, dstPort, ipProto, 1, accounting{packetLength, 1}}
 			connectionTable[hash] = append(connectionTable[hash], conn)
 			udpConnectionsStats[packetTime]++
