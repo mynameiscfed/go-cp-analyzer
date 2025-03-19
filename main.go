@@ -11,6 +11,7 @@ import (
 
 var (
 	pFile                    = flag.String("r", "", "pcap `file name` ")
+	htmlOut                  = flag.String("html-out", "", "output HTML report to `file`")
 	err                      error
 	handle                   *pcap.Handle
 	totalBytes               = 0
@@ -41,6 +42,14 @@ func main() {
 	for packet := range packetSource.Packets() {
 		// Process packet here
 		processPacket(packet)
+	}
+
+	// If HTML output is requested, generate it and exit
+	if *htmlOut != "" {
+		if err := generateHTMLReport(*htmlOut); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 
 	// Initialize and run the UI
