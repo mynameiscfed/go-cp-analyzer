@@ -4,15 +4,13 @@ import (
 	"flag"
 	"log"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcap"
 )
 
 var (
 	pFile                    = flag.String("r", "", "pcap `file name` ")
-	conntable                = flag.Bool("c", false, "dump connections table")
-	topN                     = flag.Int("n", 0, "top N connections")
-	histogram                = flag.Bool("h", false, "show packet length histogram")
 	err                      error
 	handle                   *pcap.Handle
 	totalBytes               = 0
@@ -28,9 +26,9 @@ var (
 )
 
 func main() {
-
 	// Parse flags
 	flag.Parse()
+
 	// Open device
 	handle, err = pcap.OpenOffline(*pFile)
 	if err != nil {
@@ -45,5 +43,9 @@ func main() {
 		processPacket(packet)
 	}
 
-	printResults()
+	// Initialize and run the UI
+	p := tea.NewProgram(initialModel())
+	if _, err := p.Run(); err != nil {
+		log.Fatal(err)
+	}
 }

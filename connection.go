@@ -1,11 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"net"
-	"strconv"
-
-	"github.com/olekukonko/tablewriter"
 )
 
 // connTable represents a map of connection hashes to slices of connections.
@@ -202,21 +198,4 @@ func checkTCPState(t tcpState) uint8 {
 	}
 
 	return 5 // no match
-}
-
-// dumpConnTable prints out the contents of a connection table in a formatted table.
-// It displays all active connections with their source and destination information,
-// protocol details, and traffic statistics.
-//
-// Parameters:
-//   - c: The connection table to display
-func (c connTable) dumpConnTable() {
-	fmt.Println("Connection Table")
-	var table *tablewriter.Table
-	table = newFormattedTableWriter()
-	table.SetHeader([]string{"Source IP", "Source Port", "Destination IP", "Destination Port", "Protocol", "Bytes", "Packets"})
-	for i := range c {
-		table.Append([]string{c[i][0].srcAddr.String(), strconv.Itoa(int(c[i][0].srcPort)), c[i][0].dstAddr.String(), strconv.Itoa(int(c[i][0].dstPort)), strconv.Itoa(int(c[i][0].protocol)), strconv.Itoa(c[i][0].account.bytes), strconv.Itoa(c[i][0].account.packets)})
-	}
-	table.Render()
 }

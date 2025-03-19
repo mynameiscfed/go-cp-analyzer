@@ -47,7 +47,7 @@ func processPacket(packet gopacket.Packet) {
 			ethernetStats["countErr"]++
 			return
 		}
-		a := fmt.Sprintf(ethernetPacket.EthernetType.String())
+		a := fmt.Sprint(ethernetPacket.EthernetType.String())
 		etherType[a]++
 		ethernetStats["count"]++
 	} else {
@@ -113,7 +113,7 @@ func processPacket(packet gopacket.Packet) {
 
 	case ipProto == 6:
 		isConn, hash, _ := connectionLookup(srcIP, dstIP, srcPort, dstPort, ipProto)
-		if isConn == true {
+		if isConn {
 			s := checkTCPState(state)
 			connectionTable[hash][0].connState = s
 			connectionTable[hash][0].account.bytes += packetLength
@@ -137,7 +137,7 @@ func processPacket(packet gopacket.Packet) {
 	// In a firewall the conn will be deleted after N seconds of the last packet.
 	case ipProto == 17:
 		isConn, hash, _ := connectionLookup(srcIP, dstIP, srcPort, dstPort, ipProto)
-		if isConn == true {
+		if isConn {
 			// For UDP, we just update the accounting info
 			connectionTable[hash][0].account.bytes += packetLength
 			connectionTable[hash][0].account.packets++
